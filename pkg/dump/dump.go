@@ -1,13 +1,11 @@
 package dump
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
+	"os/exec"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/jamf/go-mysqldump"
 	"github.com/mylittleboxy/backup/pkg/configType"
 )
 
@@ -21,9 +19,33 @@ func Dump(conf configType.Config) (string, error) {
 	config.Addr = conf.DB.Addr
 	config.ParseTime = true
 
-	dumpFilenameFormat := fmt.Sprintf("%s-%d", config.DBName, time.Now().Unix()) // accepts time layout string and add .sql at the end of file
+	dumpFilenameFormat := fmt.Sprintf("%s/%s-%d.sql", conf.DB.DumpDir, "bitnami_prestashop", time.Now().Unix()) // accepts time layout string and add .sql at the end of file
 
-	db, err := sql.Open("mysql", config.FormatDSN())
+	// Build the mysqldump command
+	cmd := exec.Command("mysqldump",
+		"--host="+conf.DB.Addr,
+		"--user="+conf.DB.User,
+		"--password="+conf.DB.Passwd,
+		"--single-transaction",
+		"--create-options",
+		"--extended-insert",
+		"--hex-blob",
+		"--complete-insert",
+		"bitnami_prestashop",
+	)
+
+	// Redirect the output to a file (dump.sql)
+	outfile, err := exec.Command("bash", "-c", fmt.Sprintf("%s > %s", cmd.String(), dumpFilenameFormat)).CombinedOutput()
+	if err != nil {
+		fmt.Println("Error executing mysqldump:", err)
+		fmt.Println("Output:", string(outfile))
+		return "", err
+	}
+
+	fmt.Println("Dump completed successfully. Output saved to", dumpFilenameFormat)
+	return dumpFilenameFormat, nil
+
+	/*db, err := sql.Open("mysql", config.FormatDSN())
 	if err != nil {
 		fmt.Println("Error opening database: ", err)
 		return "", err
@@ -45,5 +67,5 @@ func Dump(conf configType.Config) (string, error) {
 
 	// Close dumper, connected database and file stream.
 	dumper.Close()
-	return file.Name(), nil
+	return file.Name(), nil*/
 }

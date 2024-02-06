@@ -12,6 +12,7 @@ RUN update-ca-certificates &&\
 FROM debian
 COPY --from='builder' /go/src/build/mylittleboxy-backup /go/bin/mylittleboxy-backup
 COPY --from='builder' /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+RUN apt-get update && apt-get install -y mariadb-client
 #COPY --from='builder' /etc/passwd /etc/passwd
 #COPY --from='builder' --chown=2003 /mylittleboxy /mylittleboxy
 #USER mylittleboxy-backup

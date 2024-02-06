@@ -1,10 +1,11 @@
 package s3
 
 import (
-	"bytes"
+	"archive/tar"
 	"compress/gzip"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log"
 	"os"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,32 +15,19 @@ import (
 	"github.com/mylittleboxy/backup/pkg/configType"
 )
 
-func SendFile(config configType.Config, fileName string) error {
+func SendFiles(config configType.Config, fileNames []string, archiveName string) error {
 
-	// Open the file to be uploaded
-	file, err := os.Open(fileName)
+	// Create output file
+	out, err := os.Create(archiveName)
 	if err != nil {
-		fmt.Println("Failed to open file", err)
-		return err
+		log.Fatalln("Error writing archive:", err)
 	}
-	defer file.Close()
-
-	// Read the uncompressed file data
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		fmt.Println("Failed to read file", err)
-		return err
-	}
-
-	// Create a new buffer to store the compressed data
-	var compressedData bytes.Buffer
-	gz := gzip.NewWriter(&compressedData)
-	defer gz.Close()
+	defer out.Close()
 
 	// Write the uncompressed data to the gzip writer
-	if _, err := gz.Write(data); err != nil {
-		fmt.Println("Failed to write compressed data to gzip writer", err)
-		return err
+	err = createArchive(fileNames, out)
+	if err != nil {
+		log.Fatalln("Error creating archive:", err)
 	}
 
 	// Create a new AWS session
@@ -53,18 +41,78 @@ func SendFile(config configType.Config, fileName string) error {
 
 	// Specify the S3 bucket and file path
 	bucketName := "mylittleboxy-backup"
-
+	archiveFile, err := os.Open(archiveName)
 	// Upload the file to S3
-	out, err := svc.PutObject(&s3.PutObjectInput{
+	_, err = svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
-		Key:    aws.String(fmt.Sprintf("%s.gz", fileName)),
-		Body:   bytes.NewReader(compressedData.Bytes()),
+		Key:    aws.String(archiveName),
+		Body:   archiveFile,
 	})
 	if err != nil {
 		fmt.Println("Failed to upload file", err)
 		return err
 	}
-	out.GoString()
 	fmt.Println("File uploaded successfully")
+	return nil
+}
+func createArchive(files []string, buf io.Writer) error {
+	// Create new Writers for gzip and tar
+	// These writers are chained. Writing to the tar writer will
+	// write to the gzip writer which in turn will write to
+	// the "buf" writer
+	gw := gzip.NewWriter(buf)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	// Iterate over files and add them to the tar archive
+	for _, file := range files {
+		err := addToArchive(tw, file)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func addToArchive(tw *tar.Writer, filename string) error {
+	// Open the file which will be written into the archive
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Get FileInfo about our file providing file size, mode, etc.
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Create a tar Header from the FileInfo data
+	header, err := tar.FileInfoHeader(info, info.Name())
+	if err != nil {
+		return err
+	}
+
+	// Use full path as name (FileInfoHeader only takes the basename)
+	// If we don't do this the directory strucuture would
+	// not be preserved
+	// https://golang.org/src/archive/tar/common.go?#L626
+	header.Name = filename
+
+	// Write file header to the tar archive
+	err = tw.WriteHeader(header)
+	if err != nil {
+		return err
+	}
+
+	// Copy file content to tar archive
+	_, err = io.Copy(tw, file)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
